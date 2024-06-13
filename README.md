@@ -8,6 +8,6 @@ This codebase removes node engines from all `dgx-common` repos and does the foll
 
 ## Running the repo
 
-1. git clone the repo
+1. `git clone git@github.com:yasir-dg/node-update-manager.git`
 2. `npm i`
-3. `npm start`
+3. `npm run start`
