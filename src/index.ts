@@ -5,6 +5,7 @@ import util from 'util';
 import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
+import os from 'os';
 
 dotenv.config();
 
@@ -36,18 +37,15 @@ function delay(ms: number): Promise<void> {
 }
 
 async function updateRepository(repo: any): Promise<void> {
-  const repoPath = path.join(__dirname, '..', 'repos', repo.name);
+  const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), 'repo-'));
   const gitClient: SimpleGit = simpleGit();
   const repoUrl = `git@github.com:/${repo.full_name}.git`;
-
-  if (!fs.existsSync(repoPath)) {
-    fs.mkdirSync(repoPath, { recursive: true });
-  }
 
   try {
     await gitClient.clone(repoUrl, repoPath);
   } catch (error) {
     console.error(`Failed to clone repository ${repoUrl}:`, error);
+    fs.rmSync(repoPath, { recursive: true, force: true });
     return;
   }
 
@@ -59,7 +57,11 @@ async function updateRepository(repo: any): Promise<void> {
   }
 
   delete packageJson.engines;
-  fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
+
+  fs.writeFileSync(
+    packageJsonPath,
+    JSON.stringify(packageJson, null, 2) + '\n'
+  );
 
   const npmrcPath = path.join(repoPath, '.npmrc');
   const npmrcContent = fs.existsSync(npmrcPath)
@@ -67,7 +69,7 @@ async function updateRepository(repo: any): Promise<void> {
     : '';
   fs.writeFileSync(npmrcPath, npmrcContent + '\nengine-strict=false\n');
 
-  fs.writeFileSync(path.join(repoPath, '.nvmrc'), '18');
+  fs.writeFileSync(path.join(repoPath, '.nvmrc'), '18\n');
 
   try {
     const { stdout, stderr } = await execPromise('npm install', {
@@ -90,27 +92,23 @@ async function updateRepository(repo: any): Promise<void> {
   );
   await gitClient.push('origin', branchName);
 
-  let defaultBranch = 'main';
+  const defaultBranch = (await gitClient.branch()).current;
+
   try {
-    const { data: repoDetails } = await octokit.repos.get({
+    const { data: pr } = await octokit.pulls.create({
       owner: repo.owner.login,
       repo: repo.name,
+      title: 'Update Node version',
+      head: branchName,
+      base: defaultBranch,
+      body: 'This PR updates package.json, .npmrc, .nvmrc and package-lock.json to node 18',
     });
-    defaultBranch = repoDetails.default_branch;
+    console.log(`Created PR: ${pr.html_url}`);
   } catch (error) {
-    console.error(`Failed to get repository details for ${repo.name}:`, error);
+    console.error(`Failed to create PR for ${repo.name}:`, error);
+  } finally {
+    fs.rmSync(repoPath, { recursive: true, force: true });
   }
-
-  const { data: pr } = await octokit.pulls.create({
-    owner: repo.owner.login,
-    repo: repo.name,
-    title: 'Update Node version',
-    head: branchName,
-    base: defaultBranch,
-    body: 'This PR updates package.json, .npmrc, .nvmrc and package-lock.json to node 18',
-  });
-
-  console.log(`Created PR: ${pr.html_url}`);
 }
 
 async function processUpdate() {
