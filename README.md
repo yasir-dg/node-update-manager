@@ -9,7 +9,8 @@ This codebase removes node engines from all `dgx-common` repos and does the foll
 ## Setup
 To get started the following needs to be done:
 1. Create a personal access token at https://github.com/settings/tokens/new?scopes=repo
-2. Create a `.env` file and key `OCTOKIT_AUTH` and assign it the value of the personal access token
+2. `touch .env`
+3. Add key `OCTOKIT_AUTH` and assign it the value of the personal access token from step `1`
 
 ## Running the repo
 

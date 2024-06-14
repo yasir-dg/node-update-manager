@@ -20,7 +20,7 @@ const execPromise = util_1.default.promisify(child_process_1.exec);
 async function findRepos() {
     try {
         const { data } = await octokit.search.repos({
-            q: 'dgx-common in:name',
+            q: 'dgx-common-basket-service in:name',
             sort: 'updated',
             order: 'desc',
         });
@@ -54,10 +54,13 @@ async function updateRepository(repo) {
     delete packageJson.engines;
     fs_1.default.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + '\n');
     const npmrcPath = path_1.default.join(repoPath, '.npmrc');
-    const npmrcContent = fs_1.default.existsSync(npmrcPath)
+    let npmrcContent = fs_1.default.existsSync(npmrcPath)
         ? fs_1.default.readFileSync(npmrcPath, 'utf8')
         : '';
-    fs_1.default.writeFileSync(npmrcPath, npmrcContent + '\nengine-strict=false\n');
+    npmrcContent = npmrcContent.replace(/engine-strict=true\s*\n?/, '');
+    if (!npmrcContent.includes('engine-strict=false')) {
+        npmrcContent += fs_1.default.writeFileSync(npmrcPath, npmrcContent + '\nengine-strict=false\n');
+    }
     fs_1.default.writeFileSync(path_1.default.join(repoPath, '.nvmrc'), '18\n');
     try {
         const { stdout, stderr } = await execPromise('npm install', {
@@ -72,32 +75,29 @@ async function updateRepository(repo) {
         console.error('Failed to run npm install:', error);
         return;
     }
-    // const branchName = 'update-node-versions';
-    // await gitClient.cwd(repoPath).checkoutLocalBranch(branchName);
-    // await gitClient.add('./*');
-    // await gitClient.commit(
-    //   'Update package configurations including package-lock.json'
-    // );
-    // await gitClient.push('origin', branchName);
-    // let defaultBranch = 'main';
-    // try {
-    //   const { data: repoDetails } = await octokit.repos.get({
-    //     owner: repo.owner.login,
-    //     repo: repo.name,
-    //   });
-    //   defaultBranch = repoDetails.default_branch;
-    // } catch (error) {
-    //   console.error(`Failed to get repository details for ${repo.name}:`, error);
-    // }
-    // const { data: pr } = await octokit.pulls.create({
-    //   owner: repo.owner.login,
-    //   repo: repo.name,
-    //   title: 'Update Node version',
-    //   head: branchName,
-    //   base: defaultBranch,
-    //   body: 'This PR updates package.json, .npmrc, .nvmrc and package-lock.json to node 18',
-    // });
-    // console.log(`Created PR: ${pr.html_url}`);
+    const branchName = 'update-node-versions';
+    await gitClient.cwd(repoPath).checkoutLocalBranch(branchName);
+    await gitClient.add('./*');
+    await gitClient.commit('Update package configurations including package-lock.json');
+    await gitClient.push('origin', branchName);
+    const defaultBranch = (await gitClient.branch()).current;
+    try {
+        const { data: pr } = await octokit.pulls.create({
+            owner: repo.owner.login,
+            repo: repo.name,
+            title: 'Update Node version',
+            head: branchName,
+            base: defaultBranch,
+            body: 'This PR updates package.json, .npmrc, .nvmrc and package-lock.json to node 18',
+        });
+        console.log(`Created PR: ${pr.html_url}`);
+    }
+    catch (error) {
+        console.error(`Failed to create PR for ${repo.name}:`, error);
+    }
+    finally {
+        fs_1.default.rmSync(repoPath, { recursive: true, force: true });
+    }
 }
 async function processUpdate() {
     const repos = await findRepos();

@@ -64,10 +64,18 @@ async function updateRepository(repo: any): Promise<void> {
   );
 
   const npmrcPath = path.join(repoPath, '.npmrc');
-  const npmrcContent = fs.existsSync(npmrcPath)
+  let npmrcContent = fs.existsSync(npmrcPath)
     ? fs.readFileSync(npmrcPath, 'utf8')
     : '';
-  fs.writeFileSync(npmrcPath, npmrcContent + '\nengine-strict=false\n');
+
+  npmrcContent = npmrcContent.replace(/engine-strict=true\s*\n?/, '');
+
+  if (!npmrcContent.includes('engine-strict=false')) {
+    npmrcContent += fs.writeFileSync(
+      npmrcPath,
+      npmrcContent + '\nengine-strict=false\n'
+    );
+  }
 
   fs.writeFileSync(path.join(repoPath, '.nvmrc'), '18\n');
 
