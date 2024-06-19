@@ -11,6 +11,7 @@ const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const dotenv_1 = __importDefault(require("dotenv"));
 const os_1 = __importDefault(require("os"));
+const helpers_1 = require("./helpers");
 dotenv_1.default.config();
 const GITHUB_TOKEN = process.env.OCTOKIT_AUTH;
 const octokit = new rest_1.Octokit({
@@ -20,19 +21,18 @@ const execPromise = util_1.default.promisify(child_process_1.exec);
 async function findRepos() {
     try {
         const { data } = await octokit.search.repos({
-            q: 'dgx-common-basket-service in:name',
+            //ensures repositories that contain dgx-common libraries are returned but not services.
+            q: 'dgx-common in:name ',
             sort: 'updated',
             order: 'desc',
         });
-        return data.items;
+        const filteredRepos = data.items.filter(repo => !repo.name.includes('service'));
+        return filteredRepos;
     }
     catch (error) {
         console.error('Failed to fetch repositories:', error);
         return [];
     }
-}
-function delay(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 async function updateRepository(repo) {
     const repoPath = fs_1.default.mkdtempSync(path_1.default.join(os_1.default.tmpdir(), 'repo-'));
@@ -52,15 +52,8 @@ async function updateRepository(repo) {
         return;
     }
     delete packageJson.engines;
-    fs_1.default.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + '\n');
-    const npmrcPath = path_1.default.join(repoPath, '.npmrc');
-    let npmrcContent = fs_1.default.existsSync(npmrcPath)
-        ? fs_1.default.readFileSync(npmrcPath, 'utf8')
-        : '';
-    npmrcContent = npmrcContent.replace(/engine-strict=true\s*\n?/, '');
-    if (!npmrcContent.includes('engine-strict=false')) {
-        npmrcContent += fs_1.default.writeFileSync(npmrcPath, npmrcContent + '\nengine-strict=false\n');
-    }
+    packageJson.version = (0, helpers_1.updateNodePackageVersion)(packageJson.version);
+    (0, helpers_1.updateNpmrc)(packageJsonPath, packageJson, repoPath);
     fs_1.default.writeFileSync(path_1.default.join(repoPath, '.nvmrc'), '18\n');
     try {
         const { stdout, stderr } = await execPromise('npm install', {
@@ -75,35 +68,23 @@ async function updateRepository(repo) {
         console.error('Failed to run npm install:', error);
         return;
     }
-    const branchName = 'update-node-versions';
+    const { data: repoDetails } = await octokit.repos.get({
+        owner: repo.owner.login,
+        repo: repo.name
+    });
+    const defaultBranch = repoDetails.default_branch;
+    const branchName = 'remove-node-engines';
     await gitClient.cwd(repoPath).checkoutLocalBranch(branchName);
     await gitClient.add('./*');
     await gitClient.commit('Update package configurations including package-lock.json');
     await gitClient.push('origin', branchName);
-    const defaultBranch = (await gitClient.branch()).current;
-    try {
-        const { data: pr } = await octokit.pulls.create({
-            owner: repo.owner.login,
-            repo: repo.name,
-            title: 'Update Node version',
-            head: branchName,
-            base: defaultBranch,
-            body: 'This PR updates package.json, .npmrc, .nvmrc and package-lock.json to node 18',
-        });
-        console.log(`Created PR: ${pr.html_url}`);
-    }
-    catch (error) {
-        console.error(`Failed to create PR for ${repo.name}:`, error);
-    }
-    finally {
-        fs_1.default.rmSync(repoPath, { recursive: true, force: true });
-    }
+    await (0, helpers_1.createPullRequest)(octokit, repo, branchName, defaultBranch, repoPath);
 }
 async function processUpdate() {
     const repos = await findRepos();
     for (const repo of repos) {
         await updateRepository(repo);
-        await delay(5000);
+        await (0, helpers_1.delay)(5000);
     }
 }
 processUpdate();

@@ -13,9 +13,11 @@
   "dependencies": {
     "@octokit/rest": "^20.1.0",
     "dotenv": "^16.4.5",
+    "js-yaml": "^4.1.0",
     "simple-git": "^3.24.0"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.12.7",
     "typescript": "^5.4.5"
   }

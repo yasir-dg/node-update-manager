@@ -6,6 +6,12 @@ import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
 import os from 'os';
+import {
+  createPullRequest,
+  delay,
+  updateNodePackageVersion,
+  updateNpmrc,
+} from './helpers';
 
 dotenv.config();
 
@@ -20,20 +26,19 @@ const execPromise = util.promisify(exec);
 async function findRepos(): Promise<any[]> {
   try {
     const { data } = await octokit.search.repos({
-      q: 'dgx-common in:name',
+      //ensures repositories that contain dgx-common libraries are returned but not services.
+      q: 'dgx-common in:name ',
       sort: 'updated',
       order: 'desc',
     });
 
-    return data.items;
+    const filteredRepos = data.items.filter(repo => !repo.name.includes('service'))
+
+    return filteredRepos;
   } catch (error) {
     console.error('Failed to fetch repositories:', error);
     return [];
   }
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function updateRepository(repo: any): Promise<void> {
@@ -58,24 +63,9 @@ async function updateRepository(repo: any): Promise<void> {
 
   delete packageJson.engines;
 
-  fs.writeFileSync(
-    packageJsonPath,
-    JSON.stringify(packageJson, null, 2) + '\n'
-  );
+  packageJson.version = updateNodePackageVersion(packageJson.version)
 
-  const npmrcPath = path.join(repoPath, '.npmrc');
-  let npmrcContent = fs.existsSync(npmrcPath)
-    ? fs.readFileSync(npmrcPath, 'utf8')
-    : '';
-
-  npmrcContent = npmrcContent.replace(/engine-strict=true\s*\n?/, '');
-
-  if (!npmrcContent.includes('engine-strict=false')) {
-    npmrcContent += fs.writeFileSync(
-      npmrcPath,
-      npmrcContent + '\nengine-strict=false\n'
-    );
-  }
+  updateNpmrc(packageJsonPath, packageJson, repoPath);
 
   fs.writeFileSync(path.join(repoPath, '.nvmrc'), '18\n');
 
@@ -92,7 +82,14 @@ async function updateRepository(repo: any): Promise<void> {
     return;
   }
 
-  const branchName = 'update-node-versions';
+  const { data: repoDetails } = await octokit.repos.get({
+    owner: repo.owner.login,
+    repo: repo.name
+  });
+
+  const defaultBranch = repoDetails.default_branch
+
+  const branchName = 'remove-node-engines';
   await gitClient.cwd(repoPath).checkoutLocalBranch(branchName);
   await gitClient.add('./*');
   await gitClient.commit(
@@ -100,23 +97,7 @@ async function updateRepository(repo: any): Promise<void> {
   );
   await gitClient.push('origin', branchName);
 
-  const defaultBranch = (await gitClient.branch()).current;
-
-  try {
-    const { data: pr } = await octokit.pulls.create({
-      owner: repo.owner.login,
-      repo: repo.name,
-      title: 'Update Node version',
-      head: branchName,
-      base: defaultBranch,
-      body: 'This PR updates package.json, .npmrc, .nvmrc and package-lock.json to node 18',
-    });
-    console.log(`Created PR: ${pr.html_url}`);
-  } catch (error) {
-    console.error(`Failed to create PR for ${repo.name}:`, error);
-  } finally {
-    fs.rmSync(repoPath, { recursive: true, force: true });
-  }
+  await createPullRequest(octokit, repo, branchName, defaultBranch, repoPath);
 }
 
 async function processUpdate() {
